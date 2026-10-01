@@ -1,0 +1,712 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Controle de Estoque Colaborativo</title>
+    <!-- Tailwind CSS via CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- FontAwesome para Ícones -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        body { font-family: 'Inter', system-ui, sans-serif; background-color: #f8fafc; color: #1e293b; }
+        .modal-overlay { backdrop-filter: blur(4px); }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col">
+
+    <!-- Modal de Autenticação (Apenas Login Restrito) -->
+    <div id="auth-modal" class="fixed inset-0 bg-gray-900 bg-opacity-75 modal-overlay z-50 flex items-center justify-center p-4">
+        <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full p-8 transform transition-all">
+            <div class="w-16 h-16 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-4 text-2xl">
+                <i class="fa-solid fa-lock"></i>
+            </div>
+            
+            <h2 class="text-2xl font-bold text-gray-900 text-center mb-2">Acesso Restrito</h2>
+            <p class="text-gray-600 text-sm text-center mb-6">Informe seu ID de 8 dígitos e senha pré-cadastrados para entrar.</p>
+
+            <form id="auth-form" class="space-y-4">
+                <div>
+                    <label class="block text-xs font-semibold text-gray-700 uppercase mb-1">ID de Acesso (8 Números)</label>
+                    <input type="text" id="auth-id-input" placeholder="Ex: 12345678" maxlength="8" pattern="\d{8}" title="Informe exatamente 8 números" required class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none text-sm font-mono tracking-widest text-center">
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-gray-700 uppercase mb-1">Senha</label>
+                    <input type="password" id="auth-password" placeholder="••••••••" required class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none text-sm">
+                </div>
+                <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 rounded-lg shadow transition-colors mt-2">
+                    Entrar no Sistema
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Cabeçalho Principal -->
+    <header class="bg-white shadow-sm border-b border-gray-200">
+        <div class="max-w-7xl mx-auto px-4 py-4 flex flex-col md:flex-row justify-between items-center gap-4">
+            <div class="flex items-center space-x-3">
+                <div class="bg-blue-600 text-white p-2.5 rounded-xl shadow">
+                    <i class="fa-solid fa-boxes-stacked text-xl"></i>
+                </div>
+                <div>
+                    <h1 class="text-xl font-bold text-gray-900">Estoque Colaborativo</h1>
+                    <p class="text-xs text-gray-500">Controle de Entradas e Baixas</p>
+                </div>
+            </div>
+            <div class="flex items-center space-x-4">
+                <div class="bg-gray-100 px-4 py-2 rounded-lg flex items-center space-x-2 text-sm text-gray-700">
+                    <i class="fa-solid fa-user text-blue-600"></i>
+                    <span>Usuário: <strong id="current-user" class="text-gray-900">-</strong></span>
+                    <button id="logout-btn" class="text-xs text-red-600 hover:underline ml-3 font-medium">(Sair)</button>
+                </div>
+                <button id="export-data" class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-2 rounded-lg text-sm font-medium transition-colors" title="Exportar Dados">
+                    <i class="fa-solid fa-download mr-1"></i> Exportar
+                </button>
+                <button id="import-data" class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-2 rounded-lg text-sm font-medium transition-colors" title="Importar Dados">
+                    <i class="fa-solid fa-upload mr-1"></i> Importar
+                </button>
+                <input type="file" id="import-file" class="hidden" accept=".json">
+            </div>
+        </div>
+    </header>
+
+    <!-- Conteúdo Principal -->
+    <main class="max-w-7xl mx-auto px-4 py-8 flex-grow w-full space-y-8">
+        
+        <!-- Cards de Estatísticas -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-200 flex items-center justify-between">
+                <div>
+                    <p class="text-xs font-semibold text-gray-500 uppercase tracking-wider">Total de Itens</p>
+                    <h3 id="total-items" class="text-2xl font-bold text-gray-900 mt-1">0</h3>
+                </div>
+                <div class="bg-blue-50 text-blue-600 p-3 rounded-lg"><i class="fa-solid fa-box text-lg"></i></div>
+            </div>
+            <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-200 flex items-center justify-between">
+                <div>
+                    <p class="text-xs font-semibold text-gray-500 uppercase tracking-wider">Valor em Estoque</p>
+                    <h3 id="total-value" class="text-2xl font-bold text-gray-900 mt-1">R$ 0,00</h3>
+                </div>
+                <div class="bg-green-50 text-green-600 p-3 rounded-lg"><i class="fa-solid fa-wallet text-lg"></i></div>
+            </div>
+            <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-200 flex items-center justify-between">
+                <div>
+                    <p class="text-xs font-semibold text-gray-500 uppercase tracking-wider">Estoque Baixo</p>
+                    <h3 id="low-stock-count" class="text-2xl font-bold text-red-600 mt-1">0</h3>
+                </div>
+                <div class="bg-red-50 text-red-600 p-3 rounded-lg"><i class="fa-solid fa-triangle-exclamation text-lg"></i></div>
+            </div>
+            <div class="bg-white p-6 rounded-xl shadow-sm border border-gray-200 flex items-center justify-between">
+                <div>
+                    <p class="text-xs font-semibold text-gray-500 uppercase tracking-wider">Movimentações Hoje</p>
+                    <h3 id="today-movements" class="text-2xl font-bold text-gray-900 mt-1">0</h3>
+                </div>
+                <div class="bg-amber-50 text-amber-600 p-3 rounded-lg"><i class="fa-solid fa-clock-rotate-left text-lg"></i></div>
+            </div>
+        </div>
+
+        <!-- Seção de Produtos -->
+        <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+            <div class="p-6 border-b border-gray-200 flex flex-col md:flex-row justify-between items-center gap-4">
+                <div class="flex flex-col sm:flex-row items-center gap-3 w-full md:w-auto">
+                    <div class="relative w-full sm:w-72">
+                        <span class="absolute inset-y-0 left-0 flex items-center pl-3 text-gray-400"><i class="fa-solid fa-search"></i></span>
+                        <input type="text" id="search-input" placeholder="Buscar por nome ou SKU..." class="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none">
+                    </div>
+                    <select id="category-filter" class="w-full sm:w-auto px-4 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none">
+                        <option value="">Todas as Categorias</option>
+                    </select>
+                </div>
+                <button id="new-product-btn" class="w-full md:w-auto bg-blue-600 hover:bg-blue-700 text-white font-medium px-4 py-2 rounded-lg text-sm transition-colors flex items-center justify-center space-x-2">
+                    <i class="fa-solid fa-plus"></i>
+                    <span>Novo Produto</span>
+                </button>
+            </div>
+
+            <div class="overflow-x-auto">
+                <table class="min-w-full divide-y divide-gray-200">
+                    <thead class="bg-gray-50">
+                        <tr>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Produto / SKU</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Categoria</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Preço Un.</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Qtd Atual</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Total</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Movimentar</th>
+                            <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Ações</th>
+                        </tr>
+                    </thead>
+                    <tbody id="products-table-body" class="bg-white divide-y divide-gray-200">
+                        <!-- Preenchido via JS -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Seção de Histórico de Movimentações -->
+        <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+            <div class="p-6 border-b border-gray-200">
+                <h3 class="text-lg font-bold text-gray-900"><i class="fa-solid fa-history mr-2 text-blue-600"></i>Histórico de Movimentações (Entradas e Baixas)</h3>
+                <p class="text-xs text-gray-500 mt-0.5">Registro colaborativo de todas as alterações feitas pela equipe</p>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="min-w-full divide-y divide-gray-200">
+                    <thead class="bg-gray-50">
+                        <tr>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Data / Hora</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Produto</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Tipo</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Justificativa / Observação</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Responsável</th>
+                        </tr>
+                    </thead>
+                    <tbody id="movements-table-body" class="bg-white divide-y divide-gray-200">
+                        <!-- Preenchido via JS -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </main>
+
+    <!-- Modal de Cadastro / Edição de Produto -->
+    <div id="product-modal" class="fixed inset-0 bg-gray-900 bg-opacity-50 modal-overlay z-40 hidden items-center justify-center p-4">
+        <div class="bg-white rounded-2xl shadow-xl max-w-lg w-full p-6">
+            <h3 id="modal-title" class="text-lg font-bold text-gray-900 mb-4">Novo Produto</h3>
+            <form id="product-form" class="space-y-4">
+                <input type="hidden" id="product-id">
+                <div>
+                    <label class="block text-xs font-semibold text-gray-700 uppercase mb-1">Nome do Produto</label>
+                    <input type="text" id="product-name" required class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none">
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-700 uppercase mb-1">SKU / Código</label>
+                        <input type="text" id="product-sku" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-700 uppercase mb-1">Categoria</label>
+                        <input type="text" id="product-category" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none" placeholder="Ex: Eletrônicos">
+                    </div>
+                </div>
+                <div class="grid grid-cols-3 gap-4">
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-700 uppercase mb-1">Preço Un. (R$)</label>
+                        <input type="number" step="0.01" min="0" id="product-price" required class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-700 uppercase mb-1">Qtd Inicial</label>
+                        <input type="number" min="0" id="product-quantity" required class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-700 uppercase mb-1">Estoque Mín.</label>
+                        <input type="number" min="0" id="product-min-stock" value="5" required class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none">
+                    </div>
+                </div>
+                <div class="flex justify-end space-x-3 pt-4 border-t border-gray-200">
+                    <button type="button" id="cancel-product-btn" class="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50">Cancelar</button>
+                    <button type="submit" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium shadow">Salvar Produto</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Modal de Movimentação (Entrada / Baixa) -->
+    <div id="movement-modal" class="fixed inset-0 bg-gray-900 bg-opacity-50 modal-overlay z-40 hidden items-center justify-center p-4">
+        <div class="bg-white rounded-2xl shadow-xl max-w-md w-full p-6">
+            <h3 id="movement-title" class="text-lg font-bold text-gray-900 mb-4">Movimentar Estoque</h3>
+            <form id="movement-form" class="space-y-4">
+                <input type="hidden" id="movement-product-id">
+                <input type="hidden" id="movement-type">
+                <div>
+                    <label class="block text-xs font-semibold text-gray-700 uppercase mb-1">Quantidade</label>
+                    <input type="number" min="1" id="movement-quantity" required class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none font-bold text-lg">
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-gray-700 uppercase mb-1">Justificativa / Motivo</label>
+                    <textarea id="movement-reason" rows="3" placeholder="Ex: Venda para cliente X, Reposição de fornecedor, Uso interno..." required class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none"></textarea>
+                </div>
+                <div class="flex justify-end space-x-3 pt-4 border-t border-gray-200">
+                    <button type="button" id="cancel-movement-btn" class="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50">Cancelar</button>
+                    <button type="submit" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium shadow">Confirmar</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Script JavaScript -->
+    <script>
+        let state = {
+            currentUser: JSON.parse(sessionStorage.getItem('estoque_current_user')) || null,
+            users: [],
+            products: [],
+            movements: []
+        };
+
+        const authModal = document.getElementById('auth-modal');
+        const authForm = document.getElementById('auth-form');
+        const authIdInput = document.getElementById('auth-id-input');
+        const authPasswordInput = document.getElementById('auth-password');
+
+        const currentUserSpan = document.getElementById('current-user');
+        const logoutBtn = document.getElementById('logout-btn');
+
+        const productModal = document.getElementById('product-modal');
+        const productForm = document.getElementById('product-form');
+        const modalTitle = document.getElementById('modal-title');
+        const productIdInput = document.getElementById('product-id');
+        const cancelProductBtn = document.getElementById('cancel-product-btn');
+        const newProductBtn = document.getElementById('new-product-btn');
+
+        const movementModal = document.getElementById('movement-modal');
+        const movementForm = document.getElementById('movement-form');
+        const movementTitle = document.getElementById('movement-title');
+        const movementProductId = document.getElementById('movement-product-id');
+        const movementType = document.getElementById('movement-type');
+        const movementQuantity = document.getElementById('movement-quantity');
+        const movementReason = document.getElementById('movement-reason');
+        const cancelMovementBtn = document.getElementById('cancel-movement-btn');
+
+        const searchInput = document.getElementById('search-input');
+        const categoryFilter = document.getElementById('category-filter');
+        const productsTableBody = document.getElementById('products-table-body');
+        const movementsTableBody = document.getElementById('movements-table-body');
+
+        const totalItemsEl = document.getElementById('total-items');
+        const totalValueEl = document.getElementById('total-value');
+        const lowStockCountEl = document.getElementById('low-stock-count');
+        const todayMovementsEl = document.getElementById('today-movements');
+
+        const exportDataBtn = document.getElementById('export-data');
+        const importDataBtn = document.getElementById('import-data');
+        const importFileInput = document.getElementById('import-file');
+
+        async function loadDataFromServer() {
+            try {
+                const response = await fetch('/api/data');
+                const data = await response.json();
+                
+                state.products = data.products || [];
+                state.movements = data.movements || [];
+                state.users = data.users || [];
+                
+                renderAll();
+            } catch (error) {
+                console.error("Erro ao carregar dados do servidor:", error);
+            }
+        }
+
+        async function saveState() {
+            try {
+                const response = await fetch('/api/sync', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        user: state.currentUser,
+                        products: state.products,
+                        movements: state.movements
+                    })
+                });
+                const data = await response.json();
+                if (!response.ok) {
+                    alert(data.error || 'Erro ao sincronizar.');
+                }
+            } catch (error) {
+                console.error("Erro ao sincronizar com o servidor:", error);
+            }
+        }
+
+        window.addEventListener('DOMContentLoaded', () => {
+            loadDataFromServer().then(() => {
+                checkUserSession();
+            });
+            setupEventListeners();
+            
+            setInterval(loadDataFromServer, 5000);
+        });
+
+        function escapeHtml(text) {
+            if (!text) return '';
+            return text
+                .toString()
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#039;");
+        }
+
+        function checkUserSession() {
+            if (!state.currentUser) {
+                authModal.classList.remove('hidden');
+                authModal.classList.add('flex');
+            } else {
+                const roleLabel = state.currentUser.role === 'admin' ? 'Administrador' : 'Usuário Comum';
+                currentUserSpan.textContent = `${state.currentUser.name} (${roleLabel})`;
+                authModal.classList.add('hidden');
+                authModal.classList.remove('flex');
+            }
+        }
+
+        function setupEventListeners() {
+            authForm.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const userId = authIdInput.value.trim();
+                const password = authPasswordInput.value;
+
+                if (!/^\d{8}$/.test(userId)) {
+                    alert('O ID de acesso deve conter exatamente 8 números.');
+                    return;
+                }
+
+                try {
+                    const response = await fetch('/api/auth', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ userId, password })
+                    });
+                    const data = await response.json();
+
+                    if (!response.ok) {
+                        alert(data.error || 'ID ou senha incorretos.');
+                        return;
+                    }
+
+                    state.currentUser = data.user;
+                    sessionStorage.setItem('estoque_current_user', JSON.stringify(data.user));
+
+                    checkUserSession();
+                    loadDataFromServer();
+                } catch (err) {
+                    console.error("Erro na autenticação:", err);
+                    alert("Erro de conexão com o servidor.");
+                }
+            });
+
+            logoutBtn.addEventListener('click', () => {
+                if (confirm('Deseja realmente sair da sua conta?')) {
+                    state.currentUser = null;
+                    sessionStorage.removeItem('estoque_current_user');
+                    checkUserSession();
+                }
+            });
+
+            newProductBtn.addEventListener('click', () => {
+                if (!state.currentUser || state.currentUser.role !== 'admin') {
+                    alert('Apenas administradores podem cadastrar novos produtos.');
+                    return;
+                }
+                modalTitle.textContent = 'Novo Produto';
+                productIdInput.value = '';
+                productForm.reset();
+                productModal.classList.remove('hidden');
+                productModal.classList.add('flex');
+            });
+
+            cancelProductBtn.addEventListener('click', () => {
+                productModal.classList.add('hidden');
+                productModal.classList.remove('flex');
+            });
+
+            productForm.addEventListener('submit', (e) => {
+                e.preventDefault();
+                if (!state.currentUser || state.currentUser.role !== 'admin') {
+                    alert('Ação negada. Apenas administradores podem gerenciar produtos.');
+                    return;
+                }
+
+                const id = productIdInput.value;
+                const name = document.getElementById('product-name').value.trim();
+                const sku = document.getElementById('product-sku').value.trim();
+                const category = document.getElementById('product-category').value.trim();
+                const price = parseFloat(document.getElementById('product-price').value);
+                const quantity = parseInt(document.getElementById('product-quantity').value);
+                const minStock = parseInt(document.getElementById('product-min-stock').value);
+                const userName = state.currentUser.name;
+
+                if (id) {
+                    const index = state.products.findIndex(p => p.id === id);
+                    if (index !== -1) {
+                        const oldQty = state.products[index].quantity;
+                        state.products[index] = {
+                            ...state.products[index],
+                            name, sku, category, price, quantity, min_stock: minStock,
+                            updated_at: new Date().toISOString()
+                        };
+                        if (oldQty !== quantity) {
+                            const diff = quantity - oldQty;
+                            addMovementRecord(id, name, diff > 0 ? 'ENTRADA' : 'SAIDA', Math.abs(diff), `Ajuste manual por Admin (${userName})`);
+                        }
+                    }
+                } else {
+                    const newProduct = {
+                        id: 'prod_' + Date.now(),
+                        name, sku, category, price, quantity, min_stock: minStock,
+                        updated_at: new Date().toISOString()
+                    };
+                    state.products.push(newProduct);
+                    if (quantity > 0) {
+                        addMovementRecord(newProduct.id, name, 'ENTRADA', quantity, `Estoque inicial cadastrado por Admin (${userName})`);
+                    }
+                }
+
+                saveState();
+                productModal.classList.add('hidden');
+                productModal.classList.remove('flex');
+                renderAll();
+            });
+
+            cancelMovementBtn.addEventListener('click', () => {
+                movementModal.classList.add('hidden');
+                movementModal.classList.remove('flex');
+            });
+
+            movementForm.addEventListener('submit', (e) => {
+                e.preventDefault();
+                const productId = movementProductId.value;
+                const type = movementType.value;
+                const qty = parseInt(movementQuantity.value);
+                const reason = movementReason.value.trim();
+
+                const product = state.products.find(p => p.id === productId);
+                if (!product) return;
+
+                if (type === 'SAIDA' && product.quantity < qty) {
+                    alert(`Quantidade insuficiente! Disponível: ${product.quantity}`);
+                    return;
+                }
+
+                if (type === 'ENTRADA') {
+                    product.quantity += qty;
+                } else {
+                    product.quantity -= qty;
+                }
+                product.updated_at = new Date().toISOString();
+
+                addMovementRecord(product.id, product.name, type, qty, reason);
+                saveState();
+                movementModal.classList.add('hidden');
+                movementModal.classList.remove('flex');
+                renderAll();
+            });
+
+            searchInput.addEventListener('input', renderProductsTable);
+            categoryFilter.addEventListener('change', renderProductsTable);
+
+            exportDataBtn.addEventListener('click', () => {
+                const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(state, null, 2));
+                const downloadAnchor = document.createElement('a');
+                downloadAnchor.setAttribute("href", dataStr);
+                downloadAnchor.setAttribute("download", `controle_estoque_${new Date().toISOString().slice(0,10)}.json`);
+                document.body.appendChild(downloadAnchor);
+                downloadAnchor.click();
+                downloadAnchor.remove();
+            });
+
+            importDataBtn.addEventListener('click', () => {
+                if (!state.currentUser || state.currentUser.role !== 'admin') {
+                    alert('Apenas administradores podem importar dados completos.');
+                    return;
+                }
+                importFileInput.click();
+            });
+
+            importFileInput.addEventListener('change', (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = async function(event) {
+                    try {
+                        const imported = JSON.parse(event.target.result);
+                        if (imported.products) state.products = imported.products;
+                        if (imported.movements) state.movements = imported.movements;
+                        await saveState();
+                        renderAll();
+                        alert('Dados importados com sucesso!');
+                    } catch (err) {
+                        alert('Erro ao processar arquivo JSON.');
+                    }
+                };
+                reader.readAsText(file);
+            });
+        }
+
+        function addMovementRecord(productId, productName, type, quantity, reason) {
+            const newMovement = {
+                id: 'mov_' + Date.now() + '_' + Math.random().toString(36).substring(2, 5),
+                product_id: productId,
+                product_name: productName,
+                type: type,
+                quantity: quantity,
+                reason: reason,
+                user_name: state.currentUser ? state.currentUser.name : 'Anônimo',
+                date: new Date().toISOString()
+            };
+            state.movements.unshift(newMovement);
+        }
+
+        function renderAll() {
+            renderStats();
+            renderCategoryFilterOptions();
+            renderProductsTable();
+            renderMovementsTable();
+        }
+
+        function renderStats() {
+            const totalItems = state.products.reduce((acc, p) => acc + (p.quantity || 0), 0);
+            const totalValue = state.products.reduce((acc, p) => acc + ((p.quantity || 0) * (p.price || 0)), 0);
+            const lowStockCount = state.products.filter(p => (p.quantity || 0) <= (p.min_stock || 5)).length;
+
+            const todayStr = new Date().toISOString().slice(0, 10);
+            const todayMovements = state.movements.filter(m => m.date && m.date.slice(0, 10) === todayStr).length;
+
+            totalItemsEl.textContent = totalItems.toLocaleString('pt-BR');
+            totalValueEl.textContent = totalValue.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+            lowStockCountEl.textContent = lowStockCount;
+            todayMovementsEl.textContent = todayMovements;
+        }
+
+        function renderCategoryFilterOptions() {
+            const categories = [...new Set(state.products.map(p => p.category).filter(Boolean))];
+            const currentSelected = categoryFilter.value;
+            
+            categoryFilter.innerHTML = '<option value="">Todas as Categorias</option>';
+            categories.forEach(cat => {
+                const opt = document.createElement('option');
+                opt.value = cat;
+                opt.textContent = cat;
+                if (cat === currentSelected) opt.selected = true;
+                categoryFilter.appendChild(opt);
+            });
+        }
+
+        function renderProductsTable() {
+            const searchTerm = searchInput.value.toLowerCase();
+            const selectedCategory = categoryFilter.value;
+
+            const filtered = state.products.filter(p => {
+                const matchesSearch = (p.name && p.name.toLowerCase().includes(searchTerm)) || 
+                                      (p.sku && p.sku.toLowerCase().includes(searchTerm));
+                const matchesCategory = !selectedCategory || p.category === selectedCategory;
+                return matchesSearch && matchesCategory;
+            });
+
+            productsTableBody.innerHTML = '';
+
+            if (filtered.length === 0) {
+                productsTableBody.innerHTML = `<tr><td colspan="7" class="px-6 py-4 text-center text-sm text-gray-500">Nenhum produto encontrado.</td></tr>`;
+                return;
+            }
+
+            filtered.forEach(p => {
+                const isLowStock = (p.quantity || 0) <= (p.min_stock || 5);
+                const totalVal = (p.quantity || 0) * (p.price || 0);
+
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td class="px-6 py-4 whitespace-nowrap">
+                        <div class="text-sm font-medium text-gray-900">${escapeHtml(p.name)}</div>
+                        <div class="text-xs text-gray-500 font-mono">SKU: ${escapeHtml(p.sku || '-')}</div>
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${escapeHtml(p.category || '-')}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${(p.price || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm">
+                        <span class="px-2.5 py-1 rounded-full text-xs font-semibold ${isLowStock ? 'bg-red-100 text-red-800' : 'bg-green-100 text-green-800'}">
+                            ${p.quantity || 0} un. ${isLowStock ? '<i class="fa-solid fa-triangle-exclamation ml-1"></i>' : ''}
+                        </span>
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm font-semibold text-gray-900">${totalVal.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm space-x-1">
+                        <button onclick="openMovementModal('${p.id}', 'ENTRADA')" class="bg-green-50 hover:bg-green-100 text-green-700 px-2.5 py-1 rounded text-xs font-medium transition-colors" title="Registrar Entrada">
+                            <i class="fa-solid fa-plus mr-1"></i>Entrada
+                        </button>
+                        <button onclick="openMovementModal('${p.id}', 'SAIDA')" class="bg-red-50 hover:bg-red-100 text-red-700 px-2.5 py-1 rounded text-xs font-medium transition-colors" title="Registrar Baixa">
+                            <i class="fa-solid fa-minus mr-1"></i>Baixa
+                        </button>
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium space-x-2">
+                        <button onclick="editProduct('${p.id}')" class="text-blue-600 hover:text-blue-900" title="Editar Produto"><i class="fa-solid fa-pen-to-square"></i></button>
+                        <button onclick="deleteProduct('${p.id}')" class="text-red-600 hover:text-red-900" title="Excluir Produto"><i class="fa-solid fa-trash"></i></button>
+                    </td>
+                `;
+                productsTableBody.appendChild(tr);
+            });
+        }
+
+        function renderMovementsTable() {
+            movementsTableBody.innerHTML = '';
+
+            if (state.movements.length === 0) {
+                movementsTableBody.innerHTML = `<tr><td colspan="5" class="px-6 py-4 text-center text-sm text-gray-500">Nenhuma movimentação registrada.</td></tr>`;
+                return;
+            }
+
+            state.movements.slice(0, 50).forEach(m => {
+                const dateObj = m.date ? new Date(m.date) : new Date();
+                const formattedDate = dateObj.toLocaleString('pt-BR');
+                const isEntrada = m.type === 'ENTRADA';
+
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td class="px-6 py-4 whitespace-nowrap text-xs text-gray-500">${formattedDate}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">${escapeHtml(m.product_name)}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm">
+                        <span class="px-2 py-0.5 rounded text-xs font-semibold ${isEntrada ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}">
+                            ${isEntrada ? '+' : '-'}${m.quantity} (${m.type})
+                        </span>
+                    </td>
+                    <td class="px-6 py-4 text-sm text-gray-600 max-w-xs truncate" title="${escapeHtml(m.reason)}">${escapeHtml(m.reason)}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-xs text-gray-500">${escapeHtml(m.user_name)}</td>
+                `;
+                movementsTableBody.appendChild(tr);
+            });
+        }
+
+        window.openMovementModal = function(productId, type) {
+            const product = state.products.find(p => p.id === productId);
+            if (!product) return;
+
+            movementProductId.value = product.id;
+            movementType.value = type;
+            movementQuantity.value = '1';
+            movementReason.value = '';
+
+            movementTitle.textContent = type === 'ENTRADA' ? `Registrar Entrada: ${product.name}` : `Registrar Baixa: ${product.name}`;
+            movementModal.classList.remove('hidden');
+            movementModal.classList.add('flex');
+        };
+
+        window.editProduct = function(productId) {
+            if (!state.currentUser || state.currentUser.role !== 'admin') {
+                alert('Apenas administradores podem editar produtos.');
+                return;
+            }
+            const product = state.products.find(p => p.id === productId);
+            if (!product) return;
+
+            modalTitle.textContent = 'Editar Produto';
+            productIdInput.value = product.id;
+            document.getElementById('product-name').value = product.name || '';
+            document.getElementById('product-sku').value = product.sku || '';
+            document.getElementById('product-category').value = product.category || '';
+            document.getElementById('product-price').value = product.price || 0;
+            document.getElementById('product-quantity').value = product.quantity || 0;
+            document.getElementById('product-min-stock').value = product.min_stock || 5;
+
+            productModal.classList.remove('hidden');
+            productModal.classList.add('flex');
+        };
+
+        window.deleteProduct = function(productId) {
+            if (!state.currentUser || state.currentUser.role !== 'admin') {
+                alert('Apenas administradores podem excluir produtos.');
+                return;
+            }
+            if (confirm('Tem certeza que deseja excluir este produto do estoque?')) {
+                state.products = state.products.filter(p => p.id !== productId);
+                saveState();
+                renderAll();
+            }
+        };
+    </script>
+</body>
+</html>

@@ -1,0 +1,22 @@
+{
+  "name": "controle-estoque",
+  "version": "1.0.0",
+  "description": "Controle de Estoque Colaborativo",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^13.0.3",
+    "cors": "^2.8.6",
+    "express": "^4.22.3",
+    "pg": "^8.11.3"
+  },
+  "engines": {
+    "node": ">=18.x"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs"
+}
