@@ -1,16 +1,24 @@
-// Estado global da aplicação (Sincronizado com o Servidor)
+// Estado global da aplicação
 let state = {
     currentUser: JSON.parse(sessionStorage.getItem('estoque_current_user')) || null,
     products: [],
-    movements: []
+    movements: [],
+    users: []
 };
 
 // Elementos do DOM
 const userModal = document.getElementById('user-modal');
-const userNameInput = document.getElementById('user-name-input');
-const saveUserBtn = document.getElementById('save-user-btn');
+const userIdInput = document.getElementById('user-id-input');
+const passwordInput = document.getElementById('password-input');
+const loginBtn = document.getElementById('save-user-btn');
 const currentUserSpan = document.getElementById('current-user');
 const changeUserBtn = document.getElementById('change-user-btn');
+
+// Elementos da Modal de Alteração de Senha
+const passwordModal = document.getElementById('password-modal');
+const openPasswordModalBtn = document.getElementById('open-password-modal');
+const cancelPassBtn = document.getElementById('cancel-pass-btn');
+const passwordChangeForm = document.getElementById('password-change-form');
 
 const productModal = document.getElementById('product-modal');
 const productForm = document.getElementById('product-form');
@@ -48,7 +56,6 @@ document.addEventListener('DOMContentLoaded', () => {
     loadDataFromServer();
     setupEventListeners();
 
-    // Atualiza os dados automaticamente para refletir alterações de outros usuários
     setInterval(loadDataFromServer, 4000);
 });
 
@@ -59,8 +66,29 @@ async function loadDataFromServer() {
         if (!response.ok) return;
         const data = await response.json();
         
-        state.products = data.products || [];
-        state.movements = data.movements || [];
+        state.products = (data.products || []).map(p => ({
+            id: p.id,
+            name: p.name,
+            sku: p.sku,
+            category: p.category,
+            price: p.price,
+            quantity: p.quantity,
+            minStock: p.min_stock,
+            updatedAt: p.updated_at
+        }));
+
+        state.movements = (data.movements || []).map(m => ({
+            id: m.id,
+            productId: m.product_id,
+            productName: m.product_name,
+            type: m.type,
+            quantity: m.quantity,
+            reason: m.reason,
+            user: m.user_name,
+            date: m.date
+        }));
+
+        state.users = data.users || [];
         
         renderAll();
     } catch (error) {
@@ -68,58 +96,157 @@ async function loadDataFromServer() {
     }
 }
 
-// Salvar/Sincronizar dados no servidor
+// Salvar/Sincronizar alterações no servidor
 async function saveState() {
     try {
-        const response = await fetch('/api/sync', {
+        const productsPayload = state.products.map(p => ({
+            id: p.id,
+            name: p.name,
+            sku: p.sku,
+            category: p.category,
+            price: p.price,
+            quantity: p.quantity,
+            min_stock: p.minStock,
+            updated_at: p.updatedAt
+        }));
+
+        const movementsPayload = state.movements.map(m => ({
+            id: m.id,
+            product_id: m.productId,
+            product_name: m.productName,
+            type: m.type,
+            quantity: m.quantity,
+            reason: m.reason,
+            user_name: m.user,
+            date: m.date
+        }));
+
+        await fetch('/api/sync', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                products: state.products,
-                movements: state.movements
+                products: productsPayload,
+                movements: movementsPayload
             })
         });
-        if (!response.ok) {
-            console.error("Erro ao sincronizar com o servidor.");
-        }
     } catch (error) {
         console.error("Erro de conexão ao salvar:", error);
     }
 }
 
-// Verificação de Usuário
+// Verificação de Usuário Logado
 function checkUser() {
-    if (!state.currentUser || state.currentUser.trim() === '') {
+    if (!state.currentUser) {
         userModal.classList.remove('hidden');
         userModal.classList.add('flex');
     } else {
-        currentUserSpan.textContent = state.currentUser;
+        currentUserSpan.textContent = `${state.currentUser.name} (${state.currentUser.role})`;
         userModal.classList.add('hidden');
         userModal.classList.remove('flex');
     }
 }
 
 function setupEventListeners() {
-    saveUserBtn.addEventListener('click', () => {
-        const name = userNameInput.value.trim();
-        if (!name) {
-            alert('Por favor, informe seu nome ou apelido.');
-            return;
-        }
-        state.currentUser = name;
-        sessionStorage.setItem('estoque_current_user', JSON.stringify(name));
+    // Autenticação via API
+    if (loginBtn) {
+        loginBtn.addEventListener('click', async () => {
+            const userId = userIdInput.value.trim();
+            const password = passwordInput ? passwordInput.value.trim() : '';
+
+            if (!userId || !password) {
+                alert('Por favor, informe seu ID e senha.');
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/auth', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ userId, password })
+                });
+
+                const result = await response.json();
+
+                if (!response.ok) {
+                    alert(result.error || 'Erro ao realizar login.');
+                    return;
+                }
+
+                state.currentUser = result.user;
+                sessionStorage.setItem('estoque_current_user', JSON.stringify(result.user));
+                checkUser();
+                passwordInput.value = '';
+            } catch (err) {
+                alert('Erro de conexão com o servidor.');
+            }
+        });
+    }
+
+    if (userIdInput) {
+        userIdInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter' && loginBtn) loginBtn.click();
+        });
+    }
+
+    if (passwordInput) {
+        passwordInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter' && loginBtn) loginBtn.click();
+        });
+    }
+
+    changeUserBtn.addEventListener('click', () => {
+        state.currentUser = null;
+        sessionStorage.removeItem('estoque_current_user');
+        if (userIdInput) userIdInput.value = '';
+        if (passwordInput) passwordInput.value = '';
         checkUser();
     });
 
-    userNameInput.addEventListener('keypress', (e) => {
-        if (e.key === 'Enter') saveUserBtn.click();
-    });
+    // Eventos da Modal de Alteração de Senha
+    if (openPasswordModalBtn) {
+        openPasswordModalBtn.addEventListener('click', () => {
+            passwordModal.classList.remove('hidden');
+            passwordModal.classList.add('flex');
+        });
+    }
 
-    changeUserBtn.addEventListener('click', () => {
-        userNameInput.value = state.currentUser || '';
-        userModal.classList.remove('hidden');
-        userModal.classList.add('flex');
-    });
+    if (cancelPassBtn) {
+        cancelPassBtn.addEventListener('click', () => {
+            passwordModal.classList.add('hidden');
+            passwordModal.classList.remove('flex');
+        });
+    }
+
+    if (passwordChangeForm) {
+        passwordChangeForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const userId = document.getElementById('change-pass-userid').value.trim();
+            const oldPassword = document.getElementById('change-pass-old').value.trim();
+            const newPassword = document.getElementById('change-pass-new').value.trim();
+
+            try {
+                const response = await fetch('/api/users/password', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ userId, oldPassword, newPassword })
+                });
+
+                const result = await response.json();
+
+                if (!response.ok) {
+                    alert(result.error || 'Erro ao alterar a senha.');
+                    return;
+                }
+
+                alert(result.message || 'Senha alterada com sucesso!');
+                passwordChangeForm.reset();
+                passwordModal.classList.add('hidden');
+                passwordModal.classList.remove('flex');
+            } catch (err) {
+                alert('Erro de conexão com o servidor.');
+            }
+        });
+    }
 
     newProductBtn.addEventListener('click', () => {
         modalTitle.textContent = 'Novo Produto';
@@ -144,6 +271,8 @@ function setupEventListeners() {
         const quantity = parseInt(document.getElementById('product-quantity').value);
         const minStock = parseInt(document.getElementById('product-min-stock').value);
 
+        const userName = state.currentUser ? state.currentUser.name : 'Anônimo';
+
         if (id) {
             const index = state.products.findIndex(p => p.id === id);
             if (index !== -1) {
@@ -156,19 +285,19 @@ function setupEventListeners() {
 
                 if (oldQty !== quantity) {
                     const diff = quantity - oldQty;
-                    addMovementRecord(id, name, diff > 0 ? 'ENTRADA' : 'SAIDA', Math.abs(diff), `Ajuste manual de estoque (${state.currentUser})`);
+                    addMovementRecord(id, name, diff > 0 ? 'ENTRADA' : 'SAIDA', Math.abs(diff), `Ajuste manual (${userName})`);
                 }
             }
         } else {
             const newProduct = {
                 id: 'prod_' + Date.now(),
                 name, sku, category, price, quantity, minStock,
-                createdAt: new Date().toISOString()
+                updatedAt: new Date().toISOString()
             };
             state.products.push(newProduct);
 
             if (quantity > 0) {
-                addMovementRecord(newProduct.id, name, 'ENTRADA', quantity, `Estoque inicial cadastrado por ${state.currentUser}`);
+                addMovementRecord(newProduct.id, name, 'ENTRADA', quantity, `Estoque inicial por ${userName}`);
             }
         }
 
@@ -194,7 +323,7 @@ function setupEventListeners() {
         if (!product) return;
 
         if (type === 'SAIDA' && product.quantity < qty) {
-            alert(`Quantidade insuficiente em estoque! Disponível: ${product.quantity}`);
+            alert(`Quantidade insuficiente! Disponível: ${product.quantity}`);
             return;
         }
 
@@ -220,15 +349,13 @@ function setupEventListeners() {
         const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(state, null, 2));
         const downloadAnchor = document.createElement('a');
         downloadAnchor.setAttribute("href", dataStr);
-        downloadAnchor.setAttribute("download", `controle_estoque_${new Date().toISOString().slice(0,10)}.json`);
+        downloadAnchor.setAttribute("download", `estoque_${new Date().toISOString().slice(0,10)}.json`);
         document.body.appendChild(downloadAnchor);
         downloadAnchor.click();
         downloadAnchor.remove();
     });
 
-    importDataBtn.addEventListener('click', () => {
-        importFileInput.click();
-    });
+    importDataBtn.addEventListener('click', () => importFileInput.click());
 
     importFileInput.addEventListener('change', (e) => {
         const file = e.target.files[0];
@@ -238,7 +365,7 @@ function setupEventListeners() {
             try {
                 const imported = JSON.parse(event.target.result);
                 if (imported.products && imported.movements) {
-                    if (confirm('Deseja substituir os dados atuais pelos dados importados?')) {
+                    if (confirm('Deseja substituir os dados atuais pelos importados?')) {
                         state.products = imported.products;
                         state.movements = imported.movements;
                         saveState();
@@ -249,7 +376,7 @@ function setupEventListeners() {
                     alert('Arquivo inválido.');
                 }
             } catch (err) {
-                alert('Erro ao processar o arquivo JSON.');
+                alert('Erro ao processar arquivo JSON.');
             }
         };
         reader.readAsText(file);
@@ -257,6 +384,7 @@ function setupEventListeners() {
 }
 
 function addMovementRecord(productId, productName, type, quantity, reason) {
+    const userName = state.currentUser ? state.currentUser.name : 'Anônimo';
     const movement = {
         id: 'mov_' + Date.now() + Math.random().toString(36).substring(2, 7),
         productId,
@@ -264,7 +392,7 @@ function addMovementRecord(productId, productName, type, quantity, reason) {
         type,
         quantity,
         reason,
-        user: state.currentUser || 'Anônimo',
+        user: userName,
         date: new Date().toISOString()
     };
     state.movements.unshift(movement);
@@ -281,7 +409,6 @@ function renderDashboardCards() {
     const totalItems = state.products.reduce((acc, p) => acc + p.quantity, 0);
     const totalValue = state.products.reduce((acc, p) => acc + (p.quantity * p.price), 0);
     const lowStockCount = state.products.filter(p => p.quantity <= p.minStock).length;
-
     const todayStr = new Date().toISOString().slice(0, 10);
     const todayMovements = state.movements.filter(m => m.date && m.date.slice(0, 10) === todayStr).length;
 
@@ -294,11 +421,8 @@ function renderDashboardCards() {
 function renderCategoryFilterOptions() {
     const categories = [...new Set(state.products.map(p => p.category))].filter(Boolean);
     const currentVal = categoryFilter.value;
-    
     let html = '<option value="">Todas as Categorias</option>';
-    categories.forEach(cat => {
-        html += `<option value="${cat}">${cat}</option>`;
-    });
+    categories.forEach(cat => { html += `<option value="${cat}">${cat}</option>`; });
     categoryFilter.innerHTML = html;
     categoryFilter.value = currentVal;
 }
@@ -342,7 +466,7 @@ function renderProductsTable() {
                     ${(p.quantity * p.price).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
                 </td>
                 <td class="px-6 py-4 whitespace-nowrap text-sm font-medium space-x-2">
-                    <button onclick="openMovementModal('${p.id}', 'ENTRADA')" class="text-green-600 hover:text-green-900 bg-green-50 hover:bg-green-100 px-2.5 py-1 rounded transition-colors" title="Adicionar Quantidade">
+                    <button onclick="openMovementModal('${p.id}', 'ENTRADA')" class="text-green-600 hover:text-green-900 bg-green-50 hover:bg-green-100 px-2.5 py-1 rounded transition-colors" title="Adicionar">
                         <i class="fa-solid fa-plus mr-1"></i>Entrada
                     </button>
                     <button onclick="openMovementModal('${p.id}', 'SAIDA')" class="text-amber-600 hover:text-amber-900 bg-amber-50 hover:bg-amber-100 px-2.5 py-1 rounded transition-colors" title="Dar Baixa">
@@ -350,12 +474,8 @@ function renderProductsTable() {
                     </button>
                 </td>
                 <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium space-x-2">
-                    <button onclick="editProduct('${p.id}')" class="text-indigo-600 hover:text-indigo-900" title="Editar Produto">
-                        <i class="fa-solid fa-pen"></i>
-                    </button>
-                    <button onclick="deleteProduct('${p.id}')" class="text-red-600 hover:text-red-900" title="Excluir Produto">
-                        <i class="fa-solid fa-trash"></i>
-                    </button>
+                    <button onclick="editProduct('${p.id}')" class="text-indigo-600 hover:text-indigo-900" title="Editar"><i class="fa-solid fa-pen"></i></button>
+                    <button onclick="deleteProduct('${p.id}')" class="text-red-600 hover:text-red-900" title="Excluir"><i class="fa-solid fa-trash"></i></button>
                 </td>
             </tr>
         `;
@@ -382,7 +502,7 @@ function renderMovementsTable() {
                 <td class="px-6 py-4 whitespace-nowrap font-medium text-gray-900">${escapeHtml(m.productName)}</td>
                 <td class="px-6 py-4 whitespace-nowrap">${typeBadge} <span class="font-bold ml-1">${isEntrada ? '+' : '-'}${m.quantity}</span></td>
                 <td class="px-6 py-4 whitespace-nowrap text-gray-700">${escapeHtml(m.reason || '-')}</td>
-                <td class="px-6 py-4 whitespace-nowrap text-gray-600 font-semibold"><i class="fa-solid fa-user-tag text-gray-400 mr-1"></i>${escapeHtml(m.user)}</td>
+                <td class="px-6 py-4 whitespace-nowrap text-gray-600 font-semibold">${escapeHtml(m.user)}</td>
             </tr>
         `;
     }).join('');
@@ -401,7 +521,7 @@ window.openMovementModal = function(productId, type) {
         movementTitle.textContent = `Adicionar Quantidade: ${product.name}`;
         movementQuantity.max = 999999;
     } else {
-        movementTitle.textContent = `Dar Baixa (Saída): ${product.name}`;
+        movementTitle.textContent = `Dar Baixa: ${product.name}`;
         movementQuantity.max = product.quantity;
     }
 
@@ -430,9 +550,11 @@ window.deleteProduct = function(productId) {
     const product = state.products.find(p => p.id === productId);
     if (!product) return;
 
-    if (confirm(`Tem certeza que deseja excluir o produto "${product.name}"?`)) {
+    const userName = state.currentUser ? state.currentUser.name : 'Anônimo';
+
+    if (confirm(`Deseja excluir o produto "${product.name}"?`)) {
         state.products = state.products.filter(p => p.id !== productId);
-        addMovementRecord(productId, product.name, 'SAIDA', product.quantity, `Produto excluído por ${state.currentUser}`);
+        addMovementRecord(productId, product.name, 'SAIDA', product.quantity, `Excluído por ${userName}`);
         saveState();
         renderAll();
     }
