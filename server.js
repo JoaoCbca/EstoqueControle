@@ -87,7 +87,7 @@ function initDatabase() {
 initDatabase();
 
 // Servir arquivos estáticos (caso seu front-end esteja na mesma pasta ou numa pasta pública)
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(path.join(__dirname)));
 
 // 1. Rota de Autenticação (Login)
 app.post('/api/auth', (req, res) => {
