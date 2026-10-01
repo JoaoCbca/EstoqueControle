@@ -71,14 +71,25 @@ function initDatabase() {
         date TEXT
     )`);
 
-    const admin = db.prepare(`SELECT * FROM users WHERE user_id = ?`).get('91004500');
-    if (!admin) {
-        const securePassword = hashPassword('Corinthians1910*');
-        db.prepare(
-            `INSERT INTO users (user_id, name, password, role) VALUES (?, ?, ?, ?)`
-        ).run('91004500', 'Administrador', securePassword, 'admin');
-        console.log('Usuário Administrador criado com sucesso (ID: 91004500)');
+    // Lista de todos os 7 usuários iniciais (Senha padrão temporária: '123456')
+    const defaultUsers = [
+        { user_id: '91004500', name: 'João Vítor Maximiano', role: 'admin' },
+        { user_id: '91002420', name: 'Maiara Lima de Souza Godoy', role: 'comum' },
+        { user_id: '91006099', name: 'Mariane Ferreira Sampaio', role: 'comum' },
+        { user_id: '91006300', name: 'Ana Júlia de Marins Costa', role: 'comum' },
+        { user_id: '91004447', name: 'Júlio Gouveia', role: 'comum' },
+        { user_id: '91002345', name: 'Júlia da Silva Martins Machado', role: 'comum' },
+        { user_id: '91001371', name: 'Fábio Júnior Gonçalves', role: 'comum' }
+    ];
+
+    const insertStmt = db.prepare(`INSERT OR IGNORE INTO users (user_id, name, password, role) VALUES (?, ?, ?, ?)`);
+    
+    for (const u of defaultUsers) {
+        const securePassword = hashPassword('123456');
+        insertStmt.run(u.user_id, u.name, securePassword, u.role);
     }
+    
+    console.log('Banco de dados inicializado e todos os 7 usuários verificados/criados com sucesso.');
 }
 
 initDatabase();
@@ -108,7 +119,7 @@ app.post('/api/auth', (req, res) => {
     }
 });
 
-// Rota para Alteração/Cadastro de Senha (Valida se o ID já existe previamente no BD)
+// Rota para Alteração/Cadastro de Senha
 app.put('/api/users/password', (req, res) => {
     const { userId, oldPassword, newPassword } = req.body;
 
@@ -117,18 +128,15 @@ app.put('/api/users/password', (req, res) => {
     }
 
     try {
-        // Verifica se o ID existe previamente no banco de dados
         const user = db.prepare(`SELECT * FROM users WHERE user_id = ?`).get(userId);
         if (!user) {
             return res.status(404).json({ error: 'Este ID não está registrado no sistema.' });
         }
 
-        // Valida se a senha atual confere
         if (!verifyPassword(oldPassword, user.password)) {
             return res.status(401).json({ error: 'A senha atual está incorreta.' });
         }
 
-        // Atualiza com o novo hash seguro
         const secureNewPassword = hashPassword(newPassword);
         db.prepare(`UPDATE users SET password = ? WHERE user_id = ?`).run(secureNewPassword, userId);
 
