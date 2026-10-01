@@ -1,8 +1,8 @@
-// Estado global da aplicação
+// Estado global da aplicação (Sincronizado com o Servidor)
 let state = {
-    currentUser: localStorage.getItem('estoque_user') || '',
-    products: JSON.parse(localStorage.getItem('estoque_products')) || [],
-    movements: JSON.parse(localStorage.getItem('estoque_movements')) || []
+    currentUser: JSON.parse(sessionStorage.getItem('estoque_current_user')) || null,
+    products: [],
+    movements: []
 };
 
 // Elementos do DOM
@@ -42,12 +42,50 @@ const exportDataBtn = document.getElementById('export-data');
 const importDataBtn = document.getElementById('import-data');
 const importFileInput = document.getElementById('import-file');
 
-// Inicialização
+// Inicialização e Sincronização em Tempo Real (Polling a cada 4 segundos)
 document.addEventListener('DOMContentLoaded', () => {
     checkUser();
-    renderAll();
+    loadDataFromServer();
     setupEventListeners();
+
+    // Atualiza os dados automaticamente para refletir alterações de outros usuários
+    setInterval(loadDataFromServer, 4000);
 });
+
+// Buscar dados atualizados do servidor
+async function loadDataFromServer() {
+    try {
+        const response = await fetch('/api/data');
+        if (!response.ok) return;
+        const data = await response.json();
+        
+        state.products = data.products || [];
+        state.movements = data.movements || [];
+        
+        renderAll();
+    } catch (error) {
+        console.error("Erro ao carregar dados do servidor:", error);
+    }
+}
+
+// Salvar/Sincronizar dados no servidor
+async function saveState() {
+    try {
+        const response = await fetch('/api/sync', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                products: state.products,
+                movements: state.movements
+            })
+        });
+        if (!response.ok) {
+            console.error("Erro ao sincronizar com o servidor.");
+        }
+    } catch (error) {
+        console.error("Erro de conexão ao salvar:", error);
+    }
+}
 
 // Verificação de Usuário
 function checkUser() {
@@ -62,7 +100,6 @@ function checkUser() {
 }
 
 function setupEventListeners() {
-    // Salvar Identificação
     saveUserBtn.addEventListener('click', () => {
         const name = userNameInput.value.trim();
         if (!name) {
@@ -70,7 +107,7 @@ function setupEventListeners() {
             return;
         }
         state.currentUser = name;
-        localStorage.setItem('estoque_user', name);
+        sessionStorage.setItem('estoque_current_user', JSON.stringify(name));
         checkUser();
     });
 
@@ -79,12 +116,11 @@ function setupEventListeners() {
     });
 
     changeUserBtn.addEventListener('click', () => {
-        userNameInput.value = state.currentUser;
+        userNameInput.value = state.currentUser || '';
         userModal.classList.remove('hidden');
         userModal.classList.add('flex');
     });
 
-    // Abrir Modal Novo Produto
     newProductBtn.addEventListener('click', () => {
         modalTitle.textContent = 'Novo Produto';
         productIdInput.value = '';
@@ -98,7 +134,6 @@ function setupEventListeners() {
         productModal.classList.remove('flex');
     });
 
-    // Salvar Produto (Criar ou Editar)
     productForm.addEventListener('submit', (e) => {
         e.preventDefault();
         const id = productIdInput.value;
@@ -110,7 +145,6 @@ function setupEventListeners() {
         const minStock = parseInt(document.getElementById('product-min-stock').value);
 
         if (id) {
-            // Edição
             const index = state.products.findIndex(p => p.id === id);
             if (index !== -1) {
                 const oldQty = state.products[index].quantity;
@@ -120,14 +154,12 @@ function setupEventListeners() {
                     updatedAt: new Date().toISOString()
                 };
 
-                // Se a quantidade mudou diretamente na edição, registrar movimento de ajuste
                 if (oldQty !== quantity) {
                     const diff = quantity - oldQty;
                     addMovementRecord(id, name, diff > 0 ? 'ENTRADA' : 'SAIDA', Math.abs(diff), `Ajuste manual de estoque (${state.currentUser})`);
                 }
             }
         } else {
-            // Criação
             const newProduct = {
                 id: 'prod_' + Date.now(),
                 name, sku, category, price, quantity, minStock,
@@ -146,13 +178,11 @@ function setupEventListeners() {
         renderAll();
     });
 
-    // Fechar Modal Movimentação
     cancelMovementBtn.addEventListener('click', () => {
         movementModal.classList.add('hidden');
         movementModal.classList.remove('flex');
     });
 
-    // Salvar Movimentação (Entrada/Baixa)
     movementForm.addEventListener('submit', (e) => {
         e.preventDefault();
         const productId = movementProductId.value;
@@ -168,7 +198,6 @@ function setupEventListeners() {
             return;
         }
 
-        // Atualizar quantidade do produto
         if (type === 'ENTRADA') {
             product.quantity += qty;
         } else {
@@ -176,7 +205,6 @@ function setupEventListeners() {
         }
         product.updatedAt = new Date().toISOString();
 
-        // Registrar no histórico
         addMovementRecord(product.id, product.name, type, qty, reason);
 
         saveState();
@@ -185,11 +213,9 @@ function setupEventListeners() {
         renderAll();
     });
 
-    // Filtros e Busca
     searchInput.addEventListener('input', renderProductsTable);
     categoryFilter.addEventListener('change', renderProductsTable);
 
-    // Exportar Dados JSON
     exportDataBtn.addEventListener('click', () => {
         const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(state, null, 2));
         const downloadAnchor = document.createElement('a');
@@ -200,7 +226,6 @@ function setupEventListeners() {
         downloadAnchor.remove();
     });
 
-    // Importar Dados JSON
     importDataBtn.addEventListener('click', () => {
         importFileInput.click();
     });
@@ -216,9 +241,7 @@ function setupEventListeners() {
                     if (confirm('Deseja substituir os dados atuais pelos dados importados?')) {
                         state.products = imported.products;
                         state.movements = imported.movements;
-                        if (imported.currentUser) state.currentUser = imported.currentUser;
                         saveState();
-                        checkUser();
                         renderAll();
                         alert('Dados importados com sucesso!');
                     }
@@ -233,13 +256,12 @@ function setupEventListeners() {
     });
 }
 
-// Adicionar registro de movimentação (Corrigido o erro do substr)
 function addMovementRecord(productId, productName, type, quantity, reason) {
     const movement = {
         id: 'mov_' + Date.now() + Math.random().toString(36).substring(2, 7),
         productId,
         productName,
-        type, // 'ENTRADA' ou 'SAIDA'
+        type,
         quantity,
         reason,
         user: state.currentUser || 'Anônimo',
@@ -248,13 +270,6 @@ function addMovementRecord(productId, productName, type, quantity, reason) {
     state.movements.unshift(movement);
 }
 
-// Persistência
-function saveState() {
-    localStorage.setItem('estoque_products', JSON.stringify(state.products));
-    localStorage.setItem('estoque_movements', JSON.stringify(state.movements));
-}
-
-// Renderização geral
 function renderAll() {
     renderDashboardCards();
     renderCategoryFilterOptions();
@@ -262,14 +277,13 @@ function renderAll() {
     renderMovementsTable();
 }
 
-// Dashboard Cards
 function renderDashboardCards() {
     const totalItems = state.products.reduce((acc, p) => acc + p.quantity, 0);
     const totalValue = state.products.reduce((acc, p) => acc + (p.quantity * p.price), 0);
     const lowStockCount = state.products.filter(p => p.quantity <= p.minStock).length;
 
     const todayStr = new Date().toISOString().slice(0, 10);
-    const todayMovements = state.movements.filter(m => m.date.slice(0, 10) === todayStr).length;
+    const todayMovements = state.movements.filter(m => m.date && m.date.slice(0, 10) === todayStr).length;
 
     totalItemsEl.textContent = totalItems;
     totalValueEl.textContent = totalValue.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -277,7 +291,6 @@ function renderDashboardCards() {
     todayMovementsEl.textContent = todayMovements;
 }
 
-// Popular filtro de categorias dinamicamente
 function renderCategoryFilterOptions() {
     const categories = [...new Set(state.products.map(p => p.category))].filter(Boolean);
     const currentVal = categoryFilter.value;
@@ -290,7 +303,6 @@ function renderCategoryFilterOptions() {
     categoryFilter.value = currentVal;
 }
 
-// Tabela de Produtos
 function renderProductsTable() {
     const search = searchInput.value.toLowerCase();
     const catFilter = categoryFilter.value;
@@ -350,7 +362,6 @@ function renderProductsTable() {
     }).join('');
 }
 
-// Tabela de Histórico de Movimentações
 function renderMovementsTable() {
     if (state.movements.length === 0) {
         movementsTableBody.innerHTML = `<tr><td colspan="5" class="px-6 py-4 text-center text-gray-500">Nenhuma movimentação registrada.</td></tr>`;
@@ -363,7 +374,7 @@ function renderMovementsTable() {
             ? '<span class="px-2.5 py-0.5 rounded-full text-xs font-bold bg-green-100 text-green-800">Entrada</span>'
             : '<span class="px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-100 text-amber-800">Baixa</span>';
         
-        const dateFormatted = new Date(m.date).toLocaleString('pt-BR');
+        const dateFormatted = m.date ? new Date(m.date).toLocaleString('pt-BR') : '-';
 
         return `
             <tr class="hover:bg-gray-50 transition-colors text-sm">
@@ -377,7 +388,6 @@ function renderMovementsTable() {
     }).join('');
 }
 
-// Ações Globais chamadas via onclick
 window.openMovementModal = function(productId, type) {
     const product = state.products.find(p => p.id === productId);
     if (!product) return;
@@ -422,14 +432,14 @@ window.deleteProduct = function(productId) {
 
     if (confirm(`Tem certeza que deseja excluir o produto "${product.name}"?`)) {
         state.products = state.products.filter(p => p.id !== productId);
-        addMovementRecord(productId, product.name, 'SAIDA', product.quantity, `Produto excluído do estoque por ${state.currentUser}`);
+        addMovementRecord(productId, product.name, 'SAIDA', product.quantity, `Produto excluído por ${state.currentUser}`);
         saveState();
         renderAll();
     }
 }
 
-// Utilitário para prevenir XSS
 function escapeHtml(str) {
+    if (!str) return '';
     return String(str)
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
