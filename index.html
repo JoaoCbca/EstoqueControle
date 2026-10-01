@@ -38,6 +38,43 @@
                     Entrar no Sistema
                 </button>
             </form>
+
+            <!-- Botão para abrir a Modal de Alteração/Cadastro de Senha -->
+            <div class="mt-4 text-center">
+                <button type="button" id="open-password-modal" class="text-xs text-blue-600 hover:text-blue-800 font-medium">
+                    Alterar / Cadastrar Senha
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal de Alteração / Cadastro de Senha -->
+    <div id="password-modal" class="fixed inset-0 bg-gray-900 bg-opacity-75 modal-overlay z-50 hidden items-center justify-center p-4">
+        <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full p-8 transform transition-all">
+            <div class="w-16 h-16 bg-indigo-100 text-indigo-600 rounded-full flex items-center justify-center mx-auto mb-4 text-2xl">
+                <i class="fa-solid fa-key"></i>
+            </div>
+            <h3 class="text-2xl font-bold text-gray-900 text-center mb-2">Alterar / Cadastrar Senha</h3>
+            <p class="text-gray-600 text-sm text-center mb-6">Informe seu ID, sua senha atual (ou temporária) e a nova senha desejada.</p>
+            
+            <form id="password-change-form" class="space-y-4">
+                <div>
+                    <label class="block text-xs font-semibold text-gray-700 uppercase mb-1">ID de Acesso</label>
+                    <input type="text" id="change-pass-userid" maxlength="8" required class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none text-sm font-mono tracking-widest text-center" placeholder="Seu ID cadastrado">
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-gray-700 uppercase mb-1">Senha Atual</label>
+                    <input type="password" id="change-pass-old" required class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none text-sm" placeholder="Senha atual">
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-gray-700 uppercase mb-1">Nova Senha</label>
+                    <input type="password" id="change-pass-new" required class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none text-sm" placeholder="Nova senha">
+                </div>
+                <div class="flex space-x-3 pt-2">
+                    <button type="button" id="cancel-pass-btn" class="w-1/2 bg-gray-100 text-gray-700 font-semibold py-3 rounded-lg hover:bg-gray-200 transition-colors">Cancelar</button>
+                    <button type="submit" class="w-1/2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3 rounded-lg shadow transition-colors">Salvar Senha</button>
+                </div>
+            </form>
         </div>
     </div>
 
@@ -233,7 +270,7 @@
         </div>
     </div>
 
-    <!-- Script JavaScript -->
+    <!-- Script JavaScript Completo -->
     <script>
         let state = {
             currentUser: JSON.parse(sessionStorage.getItem('estoque_current_user')) || null,
@@ -246,6 +283,12 @@
         const authForm = document.getElementById('auth-form');
         const authIdInput = document.getElementById('auth-id-input');
         const authPasswordInput = document.getElementById('auth-password');
+
+        // Elementos da Modal de Senha
+        const passwordModal = document.getElementById('password-modal');
+        const openPasswordModalBtn = document.getElementById('open-password-modal');
+        const cancelPassBtn = document.getElementById('cancel-pass-btn');
+        const passwordChangeForm = document.getElementById('password-change-form');
 
         const currentUserSpan = document.getElementById('current-user');
         const logoutBtn = document.getElementById('logout-btn');
@@ -381,6 +424,58 @@
                     alert("Erro de conexão com o servidor.");
                 }
             });
+
+            // Controle da Modal de Senha
+            if (openPasswordModalBtn) {
+                openPasswordModalBtn.addEventListener('click', () => {
+                    authModal.classList.add('hidden');
+                    authModal.classList.remove('flex');
+                    passwordModal.classList.remove('hidden');
+                    passwordModal.classList.add('flex');
+                });
+            }
+
+            if (cancelPassBtn) {
+                cancelPassBtn.addEventListener('click', () => {
+                    passwordModal.classList.add('hidden');
+                    passwordModal.classList.remove('flex');
+                    authModal.classList.remove('hidden');
+                    authModal.classList.add('flex');
+                });
+            }
+
+            if (passwordChangeForm) {
+                passwordChangeForm.addEventListener('submit', async (e) => {
+                    e.preventDefault();
+                    const userId = document.getElementById('change-pass-userid').value.trim();
+                    const oldPassword = document.getElementById('change-pass-old').value.trim();
+                    const newPassword = document.getElementById('change-pass-new').value.trim();
+
+                    try {
+                        const response = await fetch('/api/users/password', {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ userId, oldPassword, newPassword })
+                        });
+
+                        const result = await response.json();
+
+                        if (!response.ok) {
+                            alert(result.error || 'Erro ao alterar a senha.');
+                            return;
+                        }
+
+                        alert(result.message || 'Senha alterada com sucesso!');
+                        passwordChangeForm.reset();
+                        passwordModal.classList.add('hidden');
+                        passwordModal.classList.remove('flex');
+                        authModal.classList.remove('hidden');
+                        authModal.classList.add('flex');
+                    } catch (err) {
+                        alert('Erro de conexão com o servidor.');
+                    }
+                });
+            }
 
             logoutBtn.addEventListener('click', () => {
                 if (confirm('Deseja realmente sair da sua conta?')) {
