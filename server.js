@@ -78,12 +78,12 @@ async function initDatabase() {
 
         for (const u of defaultUsers) {
             const securePassword = hashPassword('123456');
-            // Alterado para atualizar a senha e o nome se o user_id já existir
+            // AGORA SIM: Atualiza também a senha (password) se o user_id já existir
             await pool.query(
                 `INSERT INTO users (user_id, name, password, role) 
                  VALUES ($1, $2, $3, $4) 
                  ON CONFLICT (user_id) 
-                 DO UPDATE SET name = EXCLUDED.name, role = EXCLUDED.role`,
+                 DO UPDATE SET name = EXCLUDED.name, password = EXCLUDED.password, role = EXCLUDED.role`,
                 [u.user_id, u.name, securePassword, u.role]
             );
         }
@@ -98,7 +98,7 @@ initDatabase();
 
 app.use(express.static(path.join(__dirname)));
 
-// Rota de Autenticação (Login)
+// Rota de Autenticação (Login) com Logs detalhados
 app.post('/api/auth', async (req, res) => {
     const { userId, password } = req.body;
     if (!userId || !password) {
@@ -108,9 +108,18 @@ app.post('/api/auth', async (req, res) => {
         const result = await pool.query(`SELECT * FROM users WHERE user_id = $1`, [userId]);
         const user = result.rows[0];
 
-        if (!user || !verifyPassword(password, user.password)) {
+        if (!user) {
+            console.log(`Tentativa de login: Usuário ${userId} não encontrado no banco.`);
             return res.status(401).json({ error: 'ID de acesso ou senha incorretos.' });
         }
+
+        const senhaValida = verifyPassword(password, user.password);
+        if (!senhaValida) {
+            console.log(`Tentativa de login: Senha incorreta para o usuário ${userId}`);
+            return res.status(401).json({ error: 'ID de acesso ou senha incorretos.' });
+        }
+
+        console.log(`Login bem-sucedido para o usuário: ${user.name} (${userId})`);
         res.json({
             user: {
                 id: user.user_id,
@@ -119,6 +128,7 @@ app.post('/api/auth', async (req, res) => {
             }
         });
     } catch (err) {
+        console.error('Erro na rota /api/auth:', err);
         return res.status(500).json({ error: 'Erro interno no servidor.' });
     }
 });
