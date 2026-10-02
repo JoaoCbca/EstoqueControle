@@ -1,8 +1,7 @@
 const express = require('express');
-const Database = require('better-sqlite3');
+const { Pool } = require('pg');
 const cors = require('cors');
 const path = require('path');
-const fs = require('fs');
 const crypto = require('crypto');
 
 const app = express();
@@ -11,22 +10,15 @@ const PORT = process.env.PORT || 3000;
 app.use(express.json());
 app.use(cors());
 
-// Configuração do Banco de Dados SQLite
-const dbFolder = process.env.RENDER ? '/data' : __dirname;
-
-if (process.env.RENDER && !fs.existsSync(dbFolder)) {
-    try {
-        fs.mkdirSync(dbFolder, { recursive: true });
-    } catch (e) {
-        console.log('Não foi possível usar /data, alternando para a pasta local.');
+// Configuração do Banco de Dados PostgreSQL (Render)
+const pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: {
+        rejectUnauthorized: false // Obrigatório para o Postgres hospedado no Render
     }
-}
+});
 
-const finalDbFolder = (process.env.RENDER && fs.existsSync(dbFolder)) ? dbFolder : __dirname;
-const dbFile = path.join(finalDbFolder, 'estoque.db');
-const db = new Database(dbFile);
-
-console.log(`Conectado ao banco de dados SQLite em: ${dbFile}`);
+console.log('Conectando ao banco de dados PostgreSQL...');
 
 function hashPassword(password) {
     const salt = crypto.randomBytes(16).toString('hex');
@@ -40,56 +32,63 @@ function verifyPassword(password, storedHash) {
     return key === hash;
 }
 
-function initDatabase() {
-    db.exec(`CREATE TABLE IF NOT EXISTS users (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id TEXT UNIQUE,
-        name TEXT,
-        password TEXT,
-        role TEXT
-    )`);
+async function initDatabase() {
+    try {
+        await pool.query(`CREATE TABLE IF NOT EXISTS users (
+            id SERIAL PRIMARY KEY,
+            user_id TEXT UNIQUE,
+            name TEXT,
+            password TEXT,
+            role TEXT
+        )`);
 
-    db.exec(`CREATE TABLE IF NOT EXISTS products (
-        id TEXT PRIMARY KEY,
-        name TEXT,
-        sku TEXT,
-        category TEXT,
-        price REAL,
-        quantity INTEGER,
-        min_stock INTEGER,
-        updated_at TEXT
-    )`);
+        await pool.query(`CREATE TABLE IF NOT EXISTS products (
+            id TEXT PRIMARY KEY,
+            name TEXT,
+            sku TEXT,
+            category TEXT,
+            price REAL,
+            quantity INTEGER,
+            min_stock INTEGER,
+            updated_at TEXT
+        )`);
 
-    db.exec(`CREATE TABLE IF NOT EXISTS movements (
-        id TEXT PRIMARY KEY,
-        product_id TEXT,
-        product_name TEXT,
-        type TEXT,
-        quantity INTEGER,
-        reason TEXT,
-        user_name TEXT,
-        date TEXT
-    )`);
+        await pool.query(`CREATE TABLE IF NOT EXISTS movements (
+            id TEXT PRIMARY KEY,
+            product_id TEXT,
+            product_name TEXT,
+            type TEXT,
+            quantity INTEGER,
+            reason TEXT,
+            user_name TEXT,
+            date TEXT
+        )`);
 
-    // Lista de todos os 7 usuários iniciais (Senha padrão temporária: '123456')
-    const defaultUsers = [
-        { user_id: '91004500', name: 'João Vítor Maximiano', role: 'admin' },
-        { user_id: '91002420', name: 'Maiara Lima de Souza Godoy', role: 'comum' },
-        { user_id: '91006099', name: 'Mariane Ferreira Sampaio', role: 'comum' },
-        { user_id: '91006300', name: 'Ana Júlia de Marins Costa', role: 'comum' },
-        { user_id: '91004447', name: 'Júlio Gouveia', role: 'comum' },
-        { user_id: '91002345', name: 'Júlia da Silva Martins Machado', role: 'comum' },
-        { user_id: '91001371', name: 'Fábio Júnior Gonçalves', role: 'comum' }
-    ];
+        // Lista de todos os 7 usuários iniciais (Senha padrão temporária: '123456')
+        const defaultUsers = [
+            { user_id: '91004500', name: 'João Vítor Maximiano', role: 'admin' },
+            { user_id: '91002420', name: 'Maiara Lima de Souza Godoy', role: 'comum' },
+            { user_id: '91006099', name: 'Mariane Ferreira Sampaio', role: 'comum' },
+            { user_id: '91006300', name: 'Ana Júlia de Marins Costa', role: 'comum' },
+            { user_id: '91004447', name: 'Júlio Gouveia', role: 'comum' },
+            { user_id: '91002345', name: 'Júlia da Silva Martins Machado', role: 'comum' },
+            { user_id: '91001371', name: 'Fábio Júnior Gonçalves', role: 'comum' }
+        ];
 
-    const insertStmt = db.prepare(`INSERT OR IGNORE INTO users (user_id, name, password, role) VALUES (?, ?, ?, ?)`);
-    
-    for (const u of defaultUsers) {
-        const securePassword = hashPassword('123456');
-        insertStmt.run(u.user_id, u.name, securePassword, u.role);
+        for (const u of defaultUsers) {
+            const securePassword = hashPassword('123456');
+            await pool.query(
+                `INSERT INTO users (user_id, name, password, role) 
+                 VALUES ($1, $2, $3, $4) 
+                 ON CONFLICT (user_id) DO NOTHING`,
+                [u.user_id, u.name, securePassword, u.role]
+            );
+        }
+        
+        console.log('Banco de dados PostgreSQL inicializado e usuários verificados/criados com sucesso.');
+    } catch (err) {
+        console.error('Erro ao inicializar o banco de dados:', err);
     }
-    
-    console.log('Banco de dados inicializado e todos os 7 usuários verificados/criados com sucesso.');
 }
 
 initDatabase();
@@ -97,13 +96,15 @@ initDatabase();
 app.use(express.static(path.join(__dirname)));
 
 // Rota de Autenticação (Login)
-app.post('/api/auth', (req, res) => {
+app.post('/api/auth', async (req, res) => {
     const { userId, password } = req.body;
     if (!userId || !password) {
         return res.status(400).json({ error: 'Informe o ID e a senha.' });
     }
     try {
-        const user = db.prepare(`SELECT * FROM users WHERE user_id = ?`).get(userId);
+        const result = await pool.query(`SELECT * FROM users WHERE user_id = $1`, [userId]);
+        const user = result.rows[0];
+
         if (!user || !verifyPassword(password, user.password)) {
             return res.status(401).json({ error: 'ID de acesso ou senha incorretos.' });
         }
@@ -120,7 +121,7 @@ app.post('/api/auth', (req, res) => {
 });
 
 // Rota para Alteração/Cadastro de Senha
-app.put('/api/users/password', (req, res) => {
+app.put('/api/users/password', async (req, res) => {
     const { userId, oldPassword, newPassword } = req.body;
 
     if (!userId || !oldPassword || !newPassword) {
@@ -128,7 +129,9 @@ app.put('/api/users/password', (req, res) => {
     }
 
     try {
-        const user = db.prepare(`SELECT * FROM users WHERE user_id = ?`).get(userId);
+        const result = await pool.query(`SELECT * FROM users WHERE user_id = $1`, [userId]);
+        const user = result.rows[0];
+
         if (!user) {
             return res.status(404).json({ error: 'Este ID não está registrado no sistema.' });
         }
@@ -138,7 +141,7 @@ app.put('/api/users/password', (req, res) => {
         }
 
         const secureNewPassword = hashPassword(newPassword);
-        db.prepare(`UPDATE users SET password = ? WHERE user_id = ?`).run(secureNewPassword, userId);
+        await pool.query(`UPDATE users SET password = $1 WHERE user_id = $2`, [secureNewPassword, userId]);
 
         res.json({ success: true, message: 'Senha alterada com sucesso!' });
     } catch (err) {
@@ -146,38 +149,64 @@ app.put('/api/users/password', (req, res) => {
     }
 });
 
-app.get('/api/data', (req, res) => {
+app.get('/api/data', async (req, res) => {
     try {
-        const products = db.prepare(`SELECT * FROM products`).all();
-        const movements = db.prepare(`SELECT * FROM movements ORDER BY date DESC`).all();
-        const users = db.prepare(`SELECT user_id as id, name, role FROM users`).all();
-        res.json({ products, movements, users });
+        const productsRes = await pool.query(`SELECT * FROM products`);
+        const movementsRes = await pool.query(`SELECT * FROM movements ORDER BY date DESC`);
+        const usersRes = await pool.query(`SELECT user_id as id, name, role FROM users`);
+
+        res.json({ 
+            products: productsRes.rows, 
+            movements: movementsRes.rows, 
+            users: usersRes.rows 
+        });
     } catch (err) {
         res.status(500).json({ error: 'Erro ao carregar dados do sistema.' });
     }
 });
 
-app.post('/api/sync', (req, res) => {
+app.post('/api/sync', async (req, res) => {
     const { products, movements } = req.body;
+    const client = await pool.connect();
     try {
-        const syncTransaction = db.transaction(() => {
-            if (products && Array.isArray(products)) {
-                const stmt = db.prepare(`INSERT OR REPLACE INTO products (id, name, sku, category, price, quantity, min_stock, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`);
-                for (const p of products) {
-                    stmt.run(p.id, p.name, p.sku, p.category, p.price, p.quantity, p.min_stock, p.updated_at);
-                }
+        await client.query('BEGIN');
+
+        if (products && Array.isArray(products)) {
+            for (const p of products) {
+                await client.query(
+                    `INSERT INTO products (id, name, sku, category, price, quantity, min_stock, updated_at) 
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                     ON CONFLICT (id) DO UPDATE SET 
+                        name = EXCLUDED.name,
+                        sku = EXCLUDED.sku,
+                        category = EXCLUDED.category,
+                        price = EXCLUDED.price,
+                        quantity = EXCLUDED.quantity,
+                        min_stock = EXCLUDED.min_stock,
+                        updated_at = EXCLUDED.updated_at`,
+                    [p.id, p.name, p.sku, p.category, p.price, p.quantity, p.min_stock, p.updated_at]
+                );
             }
-            if (movements && Array.isArray(movements)) {
-                const stmtMov = db.prepare(`INSERT OR IGNORE INTO movements (id, product_id, product_name, type, quantity, reason, user_name, date) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`);
-                for (const m of movements) {
-                    stmtMov.run(m.id, m.product_id, m.product_name, m.type, m.quantity, m.reason, m.user_name, m.date);
-                }
+        }
+
+        if (movements && Array.isArray(movements)) {
+            for (const m of movements) {
+                await client.query(
+                    `INSERT INTO movements (id, product_id, product_name, type, quantity, reason, user_name, date) 
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                     ON CONFLICT (id) DO NOTHING`,
+                    [m.id, m.product_id, m.product_name, m.type, m.quantity, m.reason, m.user_name, m.date]
+                );
             }
-        });
-        syncTransaction();
+        }
+
+        await client.query('COMMIT');
         res.json({ success: true });
     } catch (err) {
+        await client.query('ROLLBACK');
         res.status(500).json({ error: 'Erro ao sincronizar dados.' });
+    } finally {
+        client.release();
     }
 });
 
