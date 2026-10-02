@@ -40,8 +40,14 @@ async function initDatabase() {
             user_id TEXT UNIQUE,
             name TEXT,
             password TEXT,
-            role TEXT
+            role TEXT,
+            failed_login_attempts INT DEFAULT 0,
+            lockout_until TIMESTAMP NULL
         )`);
+
+        // Garante que as colunas existam caso a tabela já tenha sido criada anteriormente
+        await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS failed_login_attempts INT DEFAULT 0`);
+        await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS lockout_until TIMESTAMP NULL`);
 
         await pool.query(`CREATE TABLE IF NOT EXISTS products (
             id TEXT PRIMARY KEY,
@@ -78,7 +84,6 @@ async function initDatabase() {
 
         for (const u of defaultUsers) {
             const securePassword = hashPassword('123456');
-            // Alterado para atualizar a senha e o nome se o user_id já existir
             await pool.query(
                 `INSERT INTO users (user_id, name, password, role) 
                  VALUES ($1, $2, $3, $4) 
@@ -98,19 +103,66 @@ initDatabase();
 
 app.use(express.static(path.join(__dirname)));
 
-// Rota de Autenticação (Login)
+// Rota de Autenticação (Login com Bloqueio de Tentativas)
 app.post('/api/auth', async (req, res) => {
     const { userId, password } = req.body;
     if (!userId || !password) {
         return res.status(400).json({ error: 'Informe o ID e a senha.' });
     }
+
     try {
         const result = await pool.query(`SELECT * FROM users WHERE user_id = $1`, [userId]);
         const user = result.rows[0];
 
-        if (!user || !verifyPassword(password, user.password)) {
+        // Mensagem genérica para não revelar se o ID existe
+        if (!user) {
             return res.status(401).json({ error: 'ID de acesso ou senha incorretos.' });
         }
+
+        const agora = new Date();
+
+        // 1. Verifica se a conta está bloqueada temporariamente
+        if (user.lockout_until && new Date(user.lockout_until) > agora) {
+            const minutosRestantes = Math.ceil((new Date(user.lockout_until) - agora) / (1000 * 60));
+            return res.status(429).json({ 
+                error: `Conta temporariamente bloqueada devido a excesso de tentativas incorretas. Tente novamente em ${minutosRestantes} minuto(s).` 
+            });
+        }
+
+        // 2. Valida a senha
+        if (!verifyPassword(password, user.password)) {
+            const novasTentativas = (user.failed_login_attempts || 0) + 1;
+            let tempoBloqueio = null;
+
+            // Se atingir 5 tentativas falhas, bloqueia por 15 minutos
+            if (novasTentativas >= 5) {
+                tempoBloqueio = new Date(agora.getTime() + 15 * 60 * 1000);
+            }
+
+            // Atualiza o contador de erros e o tempo de bloqueio no banco
+            await pool.query(
+                `UPDATE users SET failed_login_attempts = $1, lockout_until = $2 WHERE user_id = $3`,
+                [novasTentativas, tempoBloqueio, userId]
+            );
+
+            if (novasTentativas >= 5) {
+                return res.status(429).json({ 
+                    error: 'Muitas tentativas incorretas. Sua conta foi bloqueada por 15 minutos.' 
+                });
+            }
+
+            const tentativasRestantes = 5 - novasTentativas;
+            return res.status(401).json({ 
+                error: `ID de acesso ou senha incorretos. Você tem ${tentativasRestantes} tentativa(s) restante(s) antes do bloqueio.` 
+            });
+        }
+
+        // 3. LOGIN BEM-SUCEDIDO: Zera os erros e o bloqueio
+        await pool.query(
+            `UPDATE users SET failed_login_attempts = 0, lockout_until = NULL WHERE user_id = $1`,
+            [userId]
+        );
+
         res.json({
             user: {
                 id: user.user_id,
@@ -119,6 +171,7 @@ app.post('/api/auth', async (req, res) => {
             }
         });
     } catch (err) {
+        console.error('Erro no login:', err);
         return res.status(500).json({ error: 'Erro interno no servidor.' });
     }
 });
@@ -144,7 +197,12 @@ app.put('/api/users/password', async (req, res) => {
         }
 
         const secureNewPassword = hashPassword(newPassword);
-        await pool.query(`UPDATE users SET password = $1 WHERE user_id = $2`, [secureNewPassword, userId]);
+        
+        // Ao alterar a senha com sucesso, também limpamos qualquer bloqueio residual
+        await pool.query(
+            `UPDATE users SET password = $1, failed_login_attempts = 0, lockout_until = NULL WHERE user_id = $2`, 
+            [secureNewPassword, userId]
+        );
 
         res.json({ success: true, message: 'Senha alterada com sucesso!' });
     } catch (err) {
@@ -177,7 +235,6 @@ app.post('/api/sync', async (req, res) => {
     }
 
     try {
-        // Valida no banco se quem está tentando sincronizar/importar é administrador
         const userCheck = await pool.query(`SELECT role FROM users WHERE user_id = $1`, [userId]);
         const user = userCheck.rows[0];
 
