@@ -27,6 +27,7 @@ function hashPassword(password) {
 }
 
 function verifyPassword(password, storedHash) {
+    if (!storedHash || !storedHash.includes(':')) return false;
     const [salt, key] = storedHash.split(':');
     const hash = crypto.scryptSync(password, salt, 64).toString('hex');
     return key === hash;
@@ -77,10 +78,12 @@ async function initDatabase() {
 
         for (const u of defaultUsers) {
             const securePassword = hashPassword('123456');
+            // Alterado para atualizar a senha e o nome se o user_id já existir
             await pool.query(
                 `INSERT INTO users (user_id, name, password, role) 
                  VALUES ($1, $2, $3, $4) 
-                 ON CONFLICT (user_id) DO NOTHING`,
+                 ON CONFLICT (user_id) 
+                 DO UPDATE SET name = EXCLUDED.name, role = EXCLUDED.role`,
                 [u.user_id, u.name, securePassword, u.role]
             );
         }
