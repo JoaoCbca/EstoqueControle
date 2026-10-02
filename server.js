@@ -78,12 +78,11 @@ async function initDatabase() {
 
         for (const u of defaultUsers) {
             const securePassword = hashPassword('123456');
-            // AGORA SIM: Atualiza também a senha (password) se o user_id já existir
             await pool.query(
                 `INSERT INTO users (user_id, name, password, role) 
                  VALUES ($1, $2, $3, $4) 
                  ON CONFLICT (user_id) 
-                 DO UPDATE SET name = EXCLUDED.name, password = EXCLUDED.password, role = EXCLUDED.role`,
+                 DO UPDATE SET name = EXCLUDED.name, role = EXCLUDED.role`,
                 [u.user_id, u.name, securePassword, u.role]
             );
         }
@@ -98,7 +97,7 @@ initDatabase();
 
 app.use(express.static(path.join(__dirname)));
 
-// Rota de Autenticação (Login) com Logs detalhados
+// Rota de Autenticação (Login)
 app.post('/api/auth', async (req, res) => {
     const { userId, password } = req.body;
     if (!userId || !password) {
@@ -108,18 +107,9 @@ app.post('/api/auth', async (req, res) => {
         const result = await pool.query(`SELECT * FROM users WHERE user_id = $1`, [userId]);
         const user = result.rows[0];
 
-        if (!user) {
-            console.log(`Tentativa de login: Usuário ${userId} não encontrado no banco.`);
+        if (!user || !verifyPassword(password, user.password)) {
             return res.status(401).json({ error: 'ID de acesso ou senha incorretos.' });
         }
-
-        const senhaValida = verifyPassword(password, user.password);
-        if (!senhaValida) {
-            console.log(`Tentativa de login: Senha incorreta para o usuário ${userId}`);
-            return res.status(401).json({ error: 'ID de acesso ou senha incorretos.' });
-        }
-
-        console.log(`Login bem-sucedido para o usuário: ${user.name} (${userId})`);
         res.json({
             user: {
                 id: user.user_id,
@@ -128,7 +118,6 @@ app.post('/api/auth', async (req, res) => {
             }
         });
     } catch (err) {
-        console.error('Erro na rota /api/auth:', err);
         return res.status(500).json({ error: 'Erro interno no servidor.' });
     }
 });
@@ -166,60 +155,80 @@ app.get('/api/data', async (req, res) => {
     try {
         const productsRes = await pool.query(`SELECT * FROM products`);
         const movementsRes = await pool.query(`SELECT * FROM movements ORDER BY date DESC`);
-        const usersRes = await pool.query(`SELECT user_id as id, name, role FROM users`);
+        const usersRes = attr => pool.query(`SELECT user_id as id, name, role FROM users`);
+        // Correção limpa para a query de usuários abaixo:
+        const fixedUsersRes = await pool.query(`SELECT user_id as id, name, role FROM users`);
 
         res.json({ 
             products: productsRes.rows, 
             movements: movementsRes.rows, 
-            users: usersRes.rows 
+            users: fixedUsersRes.rows 
         });
     } catch (err) {
         res.status(500).json({ error: 'Erro ao carregar dados do sistema.' });
     }
 });
 
+// Rota /api/sync protegida (Apenas administradores)
 app.post('/api/sync', async (req, res) => {
-    const { products, movements } = req.body;
-    const client = await pool.connect();
+    const { products, movements, userId } = req.body;
+
+    if (!userId) {
+        return res.status(401).json({ error: 'Identificação do usuário ausente.' });
+    }
+
     try {
-        await client.query('BEGIN');
+        // Valida diretamente no banco se o usuário que está tentando sincronizar é realmente admin
+        const userCheck = await pool.query(`SELECT role FROM users WHERE user_id = $1`, [userId]);
+        const user = userCheck.rows[0];
 
-        if (products && Array.isArray(products)) {
-            for (const p of products) {
-                await client.query(
-                    `INSERT INTO products (id, name, sku, category, price, quantity, min_stock, updated_at) 
-                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-                     ON CONFLICT (id) DO UPDATE SET 
-                        name = EXCLUDED.name,
-                        sku = EXCLUDED.sku,
-                        category = EXCLUDED.category,
-                        price = EXCLUDED.price,
-                        quantity = EXCLUDED.quantity,
-                        min_stock = EXCLUDED.min_stock,
-                        updated_at = EXCLUDED.updated_at`,
-                    [p.id, p.name, p.sku, p.category, p.price, p.quantity, p.min_stock, p.updated_at]
-                );
-            }
+        if (!user || user.role !== 'admin') {
+            return res.status(403).json({ error: 'Acesso negado. Apenas administradores podem importar ou sincronizar dados.' });
         }
 
-        if (movements && Array.isArray(movements)) {
-            for (const m of movements) {
-                await client.query(
-                    `INSERT INTO movements (id, product_id, product_name, type, quantity, reason, user_name, date) 
-                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-                     ON CONFLICT (id) DO NOTHING`,
-                    [m.id, m.product_id, m.product_name, m.type, m.quantity, m.reason, m.user_name, m.date]
-                );
-            }
-        }
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
 
-        await client.query('COMMIT');
-        res.json({ success: true });
+            if (products && Array.isArray(products)) {
+                for (const p of products) {
+                    await client.query(
+                        `INSERT INTO products (id, name, sku, category, price, quantity, min_stock, updated_at) 
+                         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                         ON CONFLICT (id) DO UPDATE SET 
+                            name = EXCLUDED.name,
+                            sku = EXCLUDED.sku,
+                            category = EXCLUDED.category,
+                            price = EXCLUDED.price,
+                            quantity = EXCLUDED.quantity,
+                            min_stock = EXCLUDED.min_stock,
+                            updated_at = EXCLUDED.updated_at`,
+                        [p.id, p.name, p.sku, p.category, p.price, p.quantity, p.min_stock, p.updated_at]
+                    );
+                }
+            }
+
+            if (movements && Array.isArray(movements)) {
+                for (const m of movements) {
+                    await client.query(
+                        `INSERT INTO movements (id, product_id, product_name, type, quantity, reason, user_name, date) 
+                         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                         ON CONFLICT (id) DO NOTHING`,
+                        [m.id, m.product_id, m.product_name, m.type, m.quantity, m.reason, m.user_name, m.date]
+                    );
+                }
+            }
+
+            await client.query('COMMIT');
+            res.json({ success: true });
+        } catch (err) {
+            await client.query('ROLLBACK');
+            res.status(500).json({ error: 'Erro ao sincronizar dados.' });
+        } finally {
+            client.release();
+        }
     } catch (err) {
-        await client.query('ROLLBACK');
-        res.status(500).json({ error: 'Erro ao sincronizar dados.' });
-    } finally {
-        client.release();
+        res.status(500).json({ error: 'Erro interno ao verificar permissões.' });
     }
 });
 
