@@ -3,9 +3,11 @@ const { Pool } = require('pg');
 const cors = require('cors');
 const path = require('path');
 const crypto = require('crypto');
+const jwt = require('jsonwebtoken'); // <--- Adicionado para segurança JWT
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const JWT_SECRET = process.env.JWT_SECRET || 'chave_secreta_padrao_para_desenvolvimento'; // <--- Chave secreta
 
 app.use(express.json());
 app.use(cors());
@@ -103,7 +105,7 @@ initDatabase();
 
 app.use(express.static(path.join(__dirname)));
 
-// Rota de Autenticação (Login com Bloqueio de Tentativas)
+// Rota de Autenticação (Login com Bloqueio de Tentativas e Geração de Token JWT)
 app.post('/api/auth', async (req, res) => {
     const { userId, password } = req.body;
     if (!userId || !password) {
@@ -163,7 +165,15 @@ app.post('/api/auth', async (req, res) => {
             [userId]
         );
 
+        // Gera o Token JWT válido por 8 horas
+        const token = jwt.sign(
+            { id: user.user_id, role: user.role, name: user.name },
+            JWT_SECRET,
+            { expiresIn: '8h' }
+        );
+
         res.json({
+            token, // <--- Enviando o token gerado para o cliente
             user: {
                 id: user.user_id,
                 name: user.name,
@@ -226,22 +236,24 @@ app.get('/api/data', async (req, res) => {
     }
 });
 
-// Rota /api/sync protegida para permitir apenas administradores
+// Rota /api/sync protegida por Token JWT para permitir apenas administradores
 app.post('/api/sync', async (req, res) => {
-    const { products, movements, userId } = req.body;
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
 
-    if (!userId) {
-        return res.status(401).json({ error: 'Identificação do usuário ausente.' });
+    if (!token) {
+        return res.status(401).json({ error: 'Acesso negado. Token de autenticação ausente.' });
     }
 
     try {
-        const userCheck = await pool.query(`SELECT role FROM users WHERE user_id = $1`, [userId]);
-        const user = userCheck.rows[0];
+        // Valida o token e extrai as informações do usuário
+        const decoded = jwt.verify(token, JWT_SECRET);
 
-        if (!user || user.role !== 'admin') {
+        if (!decoded || decoded.role !== 'admin') {
             return res.status(403).json({ error: 'Acesso negado. Apenas administradores podem importar ou sincronizar dados.' });
         }
 
+        const { products, movements } = req.body;
         const client = await pool.connect();
         try {
             await client.query('BEGIN');
@@ -284,7 +296,7 @@ app.post('/api/sync', async (req, res) => {
             client.release();
         }
     } catch (err) {
-        res.status(500).json({ error: 'Erro interno ao validar permissões.' });
+        return res.status(403).json({ error: 'Sessão inválida ou expirada. Faça login novamente.' });
     }
 });
 
