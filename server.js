@@ -78,6 +78,7 @@ async function initDatabase() {
 
         for (const u of defaultUsers) {
             const securePassword = hashPassword('123456');
+            // Alterado para atualizar a senha e o nome se o user_id já existir
             await pool.query(
                 `INSERT INTO users (user_id, name, password, role) 
                  VALUES ($1, $2, $3, $4) 
@@ -155,21 +156,19 @@ app.get('/api/data', async (req, res) => {
     try {
         const productsRes = await pool.query(`SELECT * FROM products`);
         const movementsRes = await pool.query(`SELECT * FROM movements ORDER BY date DESC`);
-        const usersRes = attr => pool.query(`SELECT user_id as id, name, role FROM users`);
-        // Correção limpa para a query de usuários abaixo:
-        const fixedUsersRes = await pool.query(`SELECT user_id as id, name, role FROM users`);
+        const usersRes = await pool.query(`SELECT user_id as id, name, role FROM users`);
 
         res.json({ 
             products: productsRes.rows, 
             movements: movementsRes.rows, 
-            users: fixedUsersRes.rows 
+            users: usersRes.rows 
         });
     } catch (err) {
         res.status(500).json({ error: 'Erro ao carregar dados do sistema.' });
     }
 });
 
-// Rota /api/sync protegida (Apenas administradores)
+// Rota /api/sync protegida para permitir apenas administradores
 app.post('/api/sync', async (req, res) => {
     const { products, movements, userId } = req.body;
 
@@ -178,7 +177,7 @@ app.post('/api/sync', async (req, res) => {
     }
 
     try {
-        // Valida diretamente no banco se o usuário que está tentando sincronizar é realmente admin
+        // Valida no banco se quem está tentando sincronizar/importar é administrador
         const userCheck = await pool.query(`SELECT role FROM users WHERE user_id = $1`, [userId]);
         const user = userCheck.rows[0];
 
@@ -228,7 +227,7 @@ app.post('/api/sync', async (req, res) => {
             client.release();
         }
     } catch (err) {
-        res.status(500).json({ error: 'Erro interno ao verificar permissões.' });
+        res.status(500).json({ error: 'Erro interno ao validar permissões.' });
     }
 });
 
